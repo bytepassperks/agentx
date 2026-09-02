@@ -286,6 +286,12 @@ ${this.todos.length ? `# Current task list\n${this.todos.map((t) => `- [${t.stat
     } catch {}
     this.ev.toolStart(tu.id, tu.name, summary, tu.input);
     const t0 = Date.now();
+    const missing = (tool.spec.input_schema.required ?? []).filter((k) => tu.input[k] === undefined);
+    if (missing.length) {
+      const msg = `invalid call: missing required argument(s) ${missing.join(", ")} (got ${JSON.stringify(tu.input)}). Call ${tu.name} again with the full arguments.`;
+      this.ev.toolEnd(tu.id, msg, true, 0);
+      return { type: "tool_result", tool_use_id: tu.id, content: msg, is_error: true };
+    }
     try {
       const r = await tool.run(tu.input, this.ctx);
       this.ev.toolEnd(tu.id, r.output, !!r.isError, Date.now() - t0);

@@ -1,3 +1,6 @@
+import { appendFileSync } from "node:fs";
+import { join } from "node:path";
+import { CONFIG_DIR } from "./config";
 import type { Config } from "./config";
 
 export type TextBlock = { type: "text"; text: string };
@@ -18,7 +21,7 @@ export interface Message {
 export interface ToolSpec {
   name: string;
   description: string;
-  input_schema: Record<string, unknown>;
+  input_schema: Record<string, unknown> & { required?: string[] };
 }
 
 export interface Usage {
@@ -42,7 +45,7 @@ export interface StreamHandlers {
 interface SseEvent {
   type: string;
   index?: number;
-  content_block?: { type: string; id?: string; name?: string; text?: string };
+  content_block?: { type: string; id?: string; name?: string; text?: string; input?: Record<string, unknown> };
   delta?: { type: string; text?: string; partial_json?: string; stop_reason?: string };
   message?: { usage?: Usage };
   usage?: Partial<Usage>;
@@ -109,6 +112,7 @@ export async function streamMessage(
   let stopReason = "end_turn";
   let usage: Usage = { input_tokens: 0, output_tokens: 0 };
 
+  const debugLog = process.env.AGENTX_DEBUG ? (s: string) => appendFileSync(join(CONFIG_DIR, "debug.log"), `${new Date().toISOString()} ${s}\n`) : null;
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buf = "";
@@ -122,8 +126,10 @@ export async function streamMessage(
         const cb = ev.content_block!;
         if (cb.type === "text") blocks[ev.index!] = { type: "text", text: cb.text ?? "" };
         else if (cb.type === "tool_use") {
-          blocks[ev.index!] = { type: "tool_use", id: cb.id!, name: cb.name!, input: {} };
-          jsonBuf.set(ev.index!, "");
+          const preset = cb.input && typeof cb.input === "object" && Object.keys(cb.input).length ? cb.input : {};
+          blocks[ev.index!] = { type: "tool_use", id: cb.id!, name: cb.name!, input: preset };
+          // Some proxies emit input_json_delta before content_block_start; keep whatever already arrived.
+          if (!jsonBuf.has(ev.index!)) jsonBuf.set(ev.index!, "");
           handlers.onToolStart?.(cb.name!);
         }
         break;
@@ -144,11 +150,14 @@ export async function streamMessage(
         const b = blocks[ev.index!];
         if (b?.type === "tool_use") {
           const raw = jsonBuf.get(ev.index!) ?? "";
-          try {
-            b.input = raw.trim() ? (JSON.parse(raw) as Record<string, unknown>) : {};
-          } catch {
-            b.input = { _raw: raw };
+          if (raw.trim()) {
+            try {
+              b.input = JSON.parse(raw) as Record<string, unknown>;
+            } catch {
+              b.input = { _raw: raw };
+            }
           }
+          if (debugLog) debugLog(`tool_use ${b.name} raw=${JSON.stringify(raw)} input=${JSON.stringify(b.input)}`);
         }
         break;
       }
@@ -164,7 +173,7 @@ export async function streamMessage(
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    buf += decoder.decode(value, { stream: true });
+    buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
     let idx: number;
     while ((idx = buf.indexOf("\n\n")) !== -1) {
       const chunk = buf.slice(0, idx);
@@ -173,9 +182,18 @@ export async function streamMessage(
         if (!l.startsWith("data:")) continue;
         const data = l.slice(5).trim();
         if (!data || data === "[DONE]") continue;
+        if (debugLog) debugLog(data);
         handle(JSON.parse(data) as SseEvent);
       }
     }
+  }
+  for (const l of buf.split("\n")) {
+    if (!l.startsWith("data:")) continue;
+    const data = l.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    try {
+      handle(JSON.parse(data) as SseEvent);
+    } catch {}
   }
 
   return { content: blocks.filter(Boolean), stopReason, usage };
