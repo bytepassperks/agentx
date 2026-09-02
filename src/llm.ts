@@ -65,12 +65,13 @@ export async function streamMessage(
   tools: ToolSpec[],
   handlers: StreamHandlers,
   signal?: AbortSignal,
+  opts: { stream?: boolean } = {},
 ): Promise<StreamResult> {
   const url = cfg.baseUrl.replace(/\/+$/, "") + "/v1/messages";
   const body = {
     model: cfg.model,
     max_tokens: cfg.maxTokens,
-    stream: true,
+    stream: opts.stream !== false,
     system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
     tools,
     messages,
@@ -100,10 +101,12 @@ export async function streamMessage(
   }
 
   const ct = res.headers.get("content-type") ?? "";
-  if (!ct.includes("text/event-stream")) {
-    // Proxy did not stream; parse a full message.
+  if (opts.stream === false || !ct.includes("text/event-stream")) {
     const json = (await res.json()) as { content: ContentBlock[]; stop_reason: string; usage: Usage };
-    for (const b of json.content) if (b.type === "text") handlers.onText?.(b.text);
+    for (const b of json.content) {
+      if (b.type === "text") handlers.onText?.(b.text);
+      else if (b.type === "tool_use") handlers.onToolStart?.(b.name);
+    }
     return { content: json.content, stopReason: json.stop_reason, usage: json.usage };
   }
 
@@ -197,6 +200,15 @@ export async function streamMessage(
   }
 
   return { content: blocks.filter(Boolean), stopReason, usage };
+}
+
+/** tool_use blocks whose required arguments never arrived (broken streaming proxies). */
+export function brokenToolUses(content: ContentBlock[], tools: ToolSpec[]): ToolUseBlock[] {
+  return content.filter((b): b is ToolUseBlock => {
+    if (b.type !== "tool_use") return false;
+    const req = tools.find((t) => t.name === b.name)?.input_schema.required ?? [];
+    return req.some((k) => b.input[k] === undefined);
+  });
 }
 
 /** Some proxies emit UTF-8 bytes re-encoded as Latin-1 in streaming mode ("1â\u0080\u009315"); undo that. */

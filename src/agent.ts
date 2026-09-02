@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { hostname, platform, release } from "node:os";
 import { basename, join } from "node:path";
 import { CONFIG_DIR, type Config } from "./config";
-import { complete, LlmError, streamMessage, type ContentBlock, type Message, type TextBlock, type ToolResultBlock, type ToolUseBlock, type Usage } from "./llm";
+import { brokenToolUses, complete, LlmError, streamMessage, type ContentBlock, type Message, type TextBlock, type ToolResultBlock, type ToolUseBlock, type Usage } from "./llm";
 import { toolByName, toolSpecs } from "./tools";
 import { readMemory } from "./tools/misc";
 import { runShell } from "./tools/shell";
@@ -194,7 +194,7 @@ ${this.todos.length ? `# Current task list\n${this.todos.map((t) => `- [${t.stat
 
         this.ev.thinking("thinking");
         let started = false;
-        const result = await streamMessage(this.cfg, system, this.messages, toolSpecs, {
+        let result = await streamMessage(this.cfg, system, this.messages, toolSpecs, {
           onText: (d) => {
             if (!started) {
               started = true;
@@ -211,6 +211,16 @@ ${this.todos.length ? `# Current task list\n${this.todos.map((t) => `- [${t.stat
           },
         }, signal);
         if (started) this.ev.textEnd();
+        if (brokenToolUses(result.content, toolSpecs).length && !signal.aborted) {
+          this.ev.warn("proxy dropped tool arguments while streaming; re-requesting this turn without streaming");
+          this.ev.thinking("thinking (non-streaming)");
+          const again = await streamMessage(this.cfg, system, this.messages, toolSpecs, {}, signal, { stream: false });
+          if (!brokenToolUses(again.content, toolSpecs).length) {
+            for (const b of again.content) if (b.type === "text" && b.text) this.ev.textDelta(b.text);
+            this.ev.textEnd();
+            result = again;
+          }
+        }
         this.lastUsage = result.usage;
 
         if (!result.content.length) result.content.push({ type: "text", text: "" });
