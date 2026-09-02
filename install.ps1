@@ -71,7 +71,7 @@ if (-not $cfg.githubToken) {
     if ($g) { $cfg.githubToken = $g }
 }
 
-$cfg | ConvertTo-Json | Set-Content -Path $ConfigPath -Encoding UTF8
+[IO.File]::WriteAllText($ConfigPath, ($cfg | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
 Write-Ok "Config written to $ConfigPath"
 
 # --- git identity (needed for commits) ---

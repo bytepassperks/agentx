@@ -34,7 +34,7 @@ export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 function readJson(path: string): Record<string, unknown> | null {
   try {
     if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    return JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, "")) as Record<string, unknown>;
   } catch {
     return null;
   }
