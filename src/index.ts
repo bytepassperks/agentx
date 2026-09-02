@@ -3,19 +3,22 @@ import { resolve } from "node:path";
 import * as readline from "node:readline";
 import { Agent } from "./agent";
 import { CONFIG_PATH, loadConfig, saveConfig, type Config } from "./config";
+import { launchGui } from "./gui";
 import { renderTodos } from "./tools/misc";
 import { runShell } from "./tools/shell";
 import * as ui from "./ui";
 
-export const VERSION = "0.1.2";
+export const VERSION = "0.2.0";
 const INSTALL_URL = "https://raw.githubusercontent.com/bytepassperks/agentx/main/install.ps1";
 
 function usage() {
   ui.line(`agentx v${VERSION} — autonomous coding agent
 
 Usage:
-  agentx                       interactive session in the current directory
-  agentx "do something"        run one task, print result, exit
+  agentx                       open the desktop app (GUI) for the current directory
+  agentx --cli                 interactive terminal session in the current directory
+  agentx --serve [--port N]    run the GUI server without opening a window
+  agentx "do something"        run one task in the terminal, print result, exit
   agentx -c                    continue the most recent session in this directory
   agentx config [--token T] [--base-url U] [--model M] [--github-token G] [--show]
   agentx update                re-run the installer to get the latest version
@@ -54,8 +57,20 @@ async function main() {
   if (argv[0] === "update") {
     if (process.platform !== "win32") return ui.error("update is only supported on Windows; re-run the installer manually.");
     ui.info("downloading latest version...");
-    const r = await runShell(`irm ${INSTALL_URL} | iex`, cwd, 300_000);
+    const r = await runShell(`$env:AGENTX_NO_LAUNCH="1"; irm "${INSTALL_URL}?$(Get-Random)" | iex`, cwd, 300_000);
     ui.line(r.stdout + r.stderr);
+    return;
+  }
+
+  const continueLast = argv.includes("-c") || argv.includes("--continue");
+  const cli = argv.includes("--cli");
+  const serve = argv.includes("--serve");
+  const portIdx = argv.indexOf("--port");
+  const port = portIdx >= 0 ? Number(argv[portIdx + 1]) : undefined;
+  const task = argv.filter((a, i) => !a.startsWith("-") && !(portIdx >= 0 && i === portIdx + 1)).join(" ").trim();
+
+  if (!cli && !task && !continueLast) {
+    await launchGui(VERSION, cwd, { port, open: !serve });
     return;
   }
 
@@ -64,9 +79,6 @@ async function main() {
     ui.error(`no API token configured. Run: agentx config --token <token> --base-url <url>`);
     process.exit(1);
   }
-
-  const continueLast = argv.includes("-c") || argv.includes("--continue");
-  const task = argv.filter((a) => !a.startsWith("-")).join(" ").trim();
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
   const ask = (q: string) =>

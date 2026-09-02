@@ -40,25 +40,14 @@ function readJson(path: string): Record<string, unknown> | null {
   }
 }
 
-/** Fallback: reuse Claude Code's ~/.claude/settings.json env block if present. */
-function claudeSettings(): Partial<Config> {
-  const s = readJson(join(homedir(), ".claude", "settings.json"));
-  const env = (s?.env ?? {}) as Record<string, string>;
-  const out: Partial<Config> = {};
-  if (env.ANTHROPIC_AUTH_TOKEN) out.authToken = env.ANTHROPIC_AUTH_TOKEN;
-  if (env.ANTHROPIC_BASE_URL) out.baseUrl = env.ANTHROPIC_BASE_URL;
-  return out;
-}
-
 export function loadConfig(): Config {
   const file = (readJson(CONFIG_PATH) ?? {}) as Partial<Config>;
   const env: Partial<Config> = {};
-  if (process.env.ANTHROPIC_AUTH_TOKEN) env.authToken = process.env.ANTHROPIC_AUTH_TOKEN;
-  if (process.env.ANTHROPIC_BASE_URL) env.baseUrl = process.env.ANTHROPIC_BASE_URL;
+  if (process.env.AGENTX_TOKEN) env.authToken = process.env.AGENTX_TOKEN;
+  if (process.env.AGENTX_BASE_URL) env.baseUrl = process.env.AGENTX_BASE_URL;
   if (process.env.AGENTX_MODEL) env.model = process.env.AGENTX_MODEL;
-  if (process.env.GITHUB_TOKEN) env.githubToken = process.env.GITHUB_TOKEN;
-  if (process.env.GH_TOKEN) env.githubToken = process.env.GH_TOKEN;
-  return { ...DEFAULTS, ...claudeSettings(), ...file, ...env };
+  if (process.env.AGENTX_GITHUB_TOKEN) env.githubToken = process.env.AGENTX_GITHUB_TOKEN;
+  return { ...DEFAULTS, ...file, ...env };
 }
 
 export function saveConfig(patch: Partial<Config>): Config {

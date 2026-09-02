@@ -10,6 +10,51 @@ import { runShell } from "./tools/shell";
 import type { TodoItem, ToolContext } from "./tools/types";
 import * as ui from "./ui";
 
+export interface AgentEvents {
+  thinking(label: string): void;
+  textDelta(delta: string): void;
+  textEnd(): void;
+  toolStart(id: string, name: string, summary: string, input: Record<string, unknown>): void;
+  toolEnd(id: string, output: string, isError: boolean, ms: number): void;
+  todos(todos: TodoItem[]): void;
+  info(text: string): void;
+  warn(text: string): void;
+  error(text: string): void;
+  done(): void;
+}
+
+/** Terminal renderer used by the CLI. */
+export const cliEvents: AgentEvents = {
+  thinking: (l) => ui.spinnerStart(l),
+  textDelta: (d) => {
+    ui.spinnerStop();
+    ui.write(d);
+  },
+  textEnd: () => {
+    ui.spinnerStop();
+    ui.write("\n");
+  },
+  toolStart: (_id, name, summary) => {
+    ui.spinnerStop();
+    ui.toolHeader(name, summary);
+  },
+  toolEnd: (_id, output, isError, ms) => ui.toolResult(output + ui.color.gray(`  (${(ms / 1000).toFixed(1)}s)`), isError),
+  todos: () => {},
+  info: (t) => {
+    ui.spinnerStop();
+    ui.info(t);
+  },
+  warn: (t) => {
+    ui.spinnerStop();
+    ui.warn(t);
+  },
+  error: (t) => {
+    ui.spinnerStop();
+    ui.error(t);
+  },
+  done: () => ui.spinnerStop(),
+};
+
 export interface SessionFile {
   id: string;
   cwd: string;
@@ -30,7 +75,7 @@ export class Agent {
   abort: AbortController | null = null;
   title = "";
 
-  constructor(public cfg: Config, public cwd: string, askUser: (q: string) => Promise<string>) {
+  constructor(public cfg: Config, public cwd: string, askUser: (q: string) => Promise<string>, public ev: AgentEvents = cliEvents) {
     const hash = createHash("sha1").update(cwd.toLowerCase()).digest("hex").slice(0, 12);
     this.projectDir = join(CONFIG_DIR, "projects", hash);
     mkdirSync(join(this.projectDir, "sessions"), { recursive: true });
@@ -147,29 +192,25 @@ ${this.todos.length ? `# Current task list\n${this.todos.map((t) => `- [${t.stat
         await this.maybeCompact();
         const system = await this.systemPrompt();
 
-        ui.spinnerStart("thinking");
+        this.ev.thinking("thinking");
         let started = false;
-        let result;
-        try {
-          result = await streamMessage(this.cfg, system, this.messages, toolSpecs, {
-            onText: (d) => {
-              if (!started) {
-                ui.spinnerStop();
-                ui.write("\n");
-                started = true;
-              }
-              ui.write(d);
-            },
-            onToolStart: () => {
-              ui.spinnerStop();
-              if (started) ui.write("\n");
-              ui.spinnerStart("preparing tool call");
-            },
-          }, signal);
-        } finally {
-          ui.spinnerStop();
-        }
-        if (started) ui.write("\n");
+        const result = await streamMessage(this.cfg, system, this.messages, toolSpecs, {
+          onText: (d) => {
+            if (!started) {
+              started = true;
+              this.ev.textDelta("\n");
+            }
+            this.ev.textDelta(d);
+          },
+          onToolStart: () => {
+            if (started) {
+              started = false;
+              this.ev.textEnd();
+            }
+            this.ev.thinking("preparing tool call");
+          },
+        }, signal);
+        if (started) this.ev.textEnd();
         this.lastUsage = result.usage;
 
         if (!result.content.length) result.content.push({ type: "text", text: "" });
@@ -197,16 +238,20 @@ ${this.todos.length ? `# Current task list\n${this.todos.map((t) => `- [${t.stat
       }
     } catch (e) {
       if (signal.aborted) {
-        ui.warn("interrupted");
+        this.ev.warn("interrupted");
         this.messages.push({ role: "user", content: [{ type: "text", text: "[system] The user interrupted. Wait for their next instruction." }] });
         this.repairTrailing();
       } else if (e instanceof LlmError) {
-        ui.error(e.message);
+        this.ev.error(e.message);
         this.repairTrailing();
-      } else throw e;
+      } else {
+        this.ev.error((e as Error).message);
+        this.repairTrailing();
+      }
     } finally {
       this.abort = null;
       this.save();
+      this.ev.done();
     }
   }
 
@@ -239,15 +284,16 @@ ${this.todos.length ? `# Current task list\n${this.todos.map((t) => `- [${t.stat
     try {
       summary = tool.summarize(tu.input);
     } catch {}
-    ui.toolHeader(tu.name, summary);
+    this.ev.toolStart(tu.id, tu.name, summary, tu.input);
     const t0 = Date.now();
     try {
       const r = await tool.run(tu.input, this.ctx);
-      ui.toolResult(r.output + ui.color.gray(`  (${((Date.now() - t0) / 1000).toFixed(1)}s)`), !!r.isError);
+      this.ev.toolEnd(tu.id, r.output, !!r.isError, Date.now() - t0);
+      if (tu.name === "todo_write") this.ev.todos([...this.todos]);
       return { type: "tool_result", tool_use_id: tu.id, content: r.output || "(no output)", is_error: r.isError };
     } catch (e) {
       const msg = `tool crashed: ${(e as Error).stack ?? e}`;
-      ui.toolResult(msg, true);
+      this.ev.toolEnd(tu.id, msg, true, Date.now() - t0);
       return { type: "tool_result", tool_use_id: tu.id, content: msg, is_error: true };
     }
   }
@@ -262,7 +308,7 @@ ${this.todos.length ? `# Current task list\n${this.todos.map((t) => `- [${t.stat
 
   async maybeCompact() {
     if (this.estimateTokens() > this.cfg.compactThresholdTokens && this.messages.length > 4) {
-      ui.info(`context ~${Math.round(this.estimateTokens() / 1000)}k tokens; compacting...`);
+      this.ev.info(`context ~${Math.round(this.estimateTokens() / 1000)}k tokens; compacting...`);
       await this.compact();
     }
   }
@@ -280,7 +326,7 @@ ${this.todos.length ? `# Current task list\n${this.todos.map((t) => `- [${t.stat
       })
       .join("\n\n");
 
-    ui.spinnerStart("compacting context");
+    this.ev.thinking("compacting context");
     let summary: string;
     try {
       summary = await complete(
@@ -290,7 +336,7 @@ ${this.todos.length ? `# Current task list\n${this.todos.map((t) => `- [${t.stat
         6000,
       );
     } finally {
-      ui.spinnerStop();
+      this.ev.done();
     }
 
     this.messages = [
@@ -299,7 +345,7 @@ ${this.todos.length ? `# Current task list\n${this.todos.map((t) => `- [${t.stat
     ];
     this.lastUsage = null;
     this.save();
-    ui.info("context compacted");
+    this.ev.info("context compacted");
   }
 
   lastAssistantText(): string {

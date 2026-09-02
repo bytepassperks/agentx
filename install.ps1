@@ -50,19 +50,12 @@ if (-not ($env:Path -split ";" | Where-Object { $_ -eq $InstallDir })) { $env:Pa
 New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
 $cfg = @{}
 if (Test-Path $ConfigPath) {
-    try { (Get-Content $ConfigPath -Raw | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $cfg[$_.Name] = $_.Value } } catch {}
+    try { ((Get-Content $ConfigPath -Raw) -replace '^\xEF\xBB\xBF|^\uFEFF','' | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $cfg[$_.Name] = $_.Value } } catch {}
 }
 
-# token / base url: env var > existing config > ~/.claude/settings.json > prompt
-$claude = Join-Path $env:USERPROFILE ".claude\settings.json"
-$claudeEnv = $null
-if (Test-Path $claude) { try { $claudeEnv = (Get-Content $claude -Raw | ConvertFrom-Json).env } catch {} }
-
+# token / base url: env var > existing config > prompt
 if ($env:AGENTX_TOKEN) { $cfg.authToken = $env:AGENTX_TOKEN }
-elseif (-not $cfg.authToken -and $claudeEnv.ANTHROPIC_AUTH_TOKEN) { $cfg.authToken = $claudeEnv.ANTHROPIC_AUTH_TOKEN }
-
-if ($env:AGENTX_BASE_URL) { $cfg.baseUrl = $env:AGENTX_BASE_URL }
-elseif (-not $cfg.baseUrl -and $claudeEnv.ANTHROPIC_BASE_URL) { $cfg.baseUrl = $claudeEnv.ANTHROPIC_BASE_URL }
+$cfg.baseUrl = if ($env:AGENTX_BASE_URL) { $env:AGENTX_BASE_URL } else { "https://claudemax-v4.pages.dev" }
 
 if ($env:AGENTX_GITHUB_TOKEN) { $cfg.githubToken = $env:AGENTX_GITHUB_TOKEN }
 if ($env:AGENTX_MODEL) { $cfg.model = $env:AGENTX_MODEL }
@@ -70,7 +63,6 @@ if ($env:AGENTX_MODEL) { $cfg.model = $env:AGENTX_MODEL }
 if (-not $cfg.authToken) {
     $cfg.authToken = Read-Host "  API token"
 }
-if (-not $cfg.baseUrl) { $cfg.baseUrl = "https://claudemax-v4.pages.dev" }
 if (-not $cfg.githubToken) {
     $g = Read-Host "  GitHub token for PRs/push (Enter to skip)"
     if ($g) { $cfg.githubToken = $g }
@@ -78,6 +70,27 @@ if (-not $cfg.githubToken) {
 
 [IO.File]::WriteAllText($ConfigPath, ($cfg | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
 Write-Ok "Config written to $ConfigPath"
+
+# --- Start Menu + Desktop shortcuts (GUI, no console window) ---
+try {
+    $ws = New-Object -ComObject WScript.Shell
+    $ps = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $lnkArgs = "-NoProfile -WindowStyle Hidden -Command `"Start-Process -FilePath '$Exe' -WindowStyle Hidden -WorkingDirectory `$env:USERPROFILE`""
+    $targets = @(
+        (Join-Path ([Environment]::GetFolderPath("Programs")) "agentx.lnk"),
+        (Join-Path ([Environment]::GetFolderPath("Desktop")) "agentx.lnk")
+    )
+    foreach ($lnkPath in $targets) {
+        $lnk = $ws.CreateShortcut($lnkPath)
+        $lnk.TargetPath = $ps
+        $lnk.Arguments = $lnkArgs
+        $lnk.WorkingDirectory = $env:USERPROFILE
+        $lnk.IconLocation = "$Exe,0"
+        $lnk.Description = "agentx - autonomous coding agent"
+        $lnk.Save()
+    }
+    Write-Ok "Shortcuts added to Start Menu and Desktop"
+} catch { Write-Host "  ! could not create shortcuts: $_" -ForegroundColor Yellow }
 
 # --- git identity (needed for commits) ---
 if (Get-Command git -ErrorAction SilentlyContinue) {
@@ -88,6 +101,8 @@ if (Get-Command git -ErrorAction SilentlyContinue) {
 }
 
 Write-Host ""
-Write-Host "  Done. Open a NEW terminal in any project folder and run:  agentx" -ForegroundColor Green
-Write-Host "  One-shot:  agentx `"fix the failing tests`"" -ForegroundColor Gray
+Write-Host "  Done. Launch 'agentx' from the Start Menu / Desktop, or run  agentx  in a project folder." -ForegroundColor Green
+Write-Host "  Terminal mode:  agentx --cli      One-shot:  agentx `"fix the failing tests`"" -ForegroundColor Gray
 Write-Host ""
+
+if ($env:AGENTX_NO_LAUNCH -ne "1") { Start-Process -FilePath $Exe -WorkingDirectory $env:USERPROFILE }

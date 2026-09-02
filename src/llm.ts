@@ -132,10 +132,11 @@ export async function streamMessage(
         const d = ev.delta!;
         const b = blocks[ev.index!];
         if (d.type === "text_delta" && b?.type === "text") {
-          b.text += d.text ?? "";
-          handlers.onText?.(d.text ?? "");
+          const t = fixMojibake(d.text ?? "");
+          b.text += t;
+          handlers.onText?.(t);
         } else if (d.type === "input_json_delta") {
-          jsonBuf.set(ev.index!, (jsonBuf.get(ev.index!) ?? "") + (d.partial_json ?? ""));
+          jsonBuf.set(ev.index!, (jsonBuf.get(ev.index!) ?? "") + fixMojibake(d.partial_json ?? ""));
         }
         break;
       }
@@ -178,6 +179,13 @@ export async function streamMessage(
   }
 
   return { content: blocks.filter(Boolean), stopReason, usage };
+}
+
+/** Some proxies emit UTF-8 bytes re-encoded as Latin-1 in streaming mode ("1â\u0080\u009315"); undo that. */
+export function fixMojibake(s: string): string {
+  if (!/[\u00C2-\u00F4][\u0080-\u00BF]/.test(s)) return s;
+  const fixed = Buffer.from(s, "latin1").toString("utf8");
+  return fixed.includes("\uFFFD") ? s : fixed;
 }
 
 /** Non-streaming helper for internal calls (summaries etc.). */

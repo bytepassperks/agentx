@@ -9,14 +9,21 @@ Talks to any Anthropic-compatible `/v1/messages` endpoint (your own proxy, Bedro
 $env:AGENTX_TOKEN="YOUR_TOKEN"; $env:AGENTX_GITHUB_TOKEN="ghp_xxx"; irm https://raw.githubusercontent.com/bytepassperks/agentx/main/install.ps1 | iex
 ```
 
-`AGENTX_GITHUB_TOKEN` is optional (needed for `git_push` / PR creation). If `~/.claude/settings.json` already has your token/base URL, the installer picks it up automatically. Base URL defaults to `https://claudemax-v4.pages.dev`; override with `$env:AGENTX_BASE_URL`.
+`AGENTX_GITHUB_TOKEN` is optional (needed for `git_push` / PR creation). Base URL defaults to `https://claudemax-v4.pages.dev`; override with `$env:AGENTX_BASE_URL`.
 
-Then open a new terminal in any project:
+The installer adds an **agentx** shortcut to the Start Menu and Desktop and opens the app.
+
+## Desktop app (default)
+
+`agentx` (or the shortcut) opens a window: pick a project folder, chat, watch streamed replies and every tool call (command, file edit, search…) as expandable cards, see the task list and past sessions, stop a run, compact context, and edit settings — all local (the exe serves the UI on `127.0.0.1` and opens it in an Edge/Chrome app window).
+
+## Terminal mode
 
 ```
-agentx                      # interactive
+agentx --cli                # interactive terminal session
 agentx "add tests for utils.py and make them pass"
 agentx -c                   # continue last session in this folder
+agentx --serve --port 4747  # GUI server only (open the URL yourself)
 agentx update               # upgrade
 ```
 
