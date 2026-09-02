@@ -29,7 +29,12 @@ $tmp = "$Exe.download"
 Write-Step "Downloading agentx ($Version)..."
 $ProgressPreference = "SilentlyContinue"
 Invoke-WebRequest $Url -OutFile $tmp -UseBasicParsing
-if (Test-Path $Exe) { Remove-Item $Exe -Force }
+$old = "$Exe.old"
+if (Test-Path $old) { Remove-Item $old -Force -ErrorAction SilentlyContinue }
+if (Test-Path $Exe) {
+    # A running exe cannot be deleted on Windows, but it can be renamed.
+    try { Remove-Item $Exe -Force -ErrorAction Stop } catch { Move-Item $Exe $old -Force }
+}
 Move-Item $tmp $Exe -Force
 Write-Ok "Installed to $Exe"
 
