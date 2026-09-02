@@ -211,15 +211,30 @@ ${this.todos.length ? `# Current task list\n${this.todos.map((t) => `- [${t.stat
           },
         }, signal);
         if (started) this.ev.textEnd();
-        if (brokenToolUses(result.content, toolSpecs).length && !signal.aborted) {
-          this.ev.warn("proxy dropped tool arguments while streaming; re-requesting this turn without streaming");
+        let truncated = !result.complete || brokenToolUses(result.content, toolSpecs).length > 0;
+        if (truncated && !signal.aborted) {
+          this.ev.warn("connection to the API was cut mid-response; re-requesting this turn without streaming");
           this.ev.thinking("thinking (non-streaming)");
-          const again = await streamMessage(this.cfg, system, this.messages, toolSpecs, {}, signal, { stream: false });
-          if (!brokenToolUses(again.content, toolSpecs).length) {
-            for (const b of again.content) if (b.type === "text" && b.text) this.ev.textDelta(b.text);
-            this.ev.textEnd();
-            result = again;
+          try {
+            const again = await streamMessage(this.cfg, system, this.messages, toolSpecs, {}, signal, { stream: false });
+            if (!brokenToolUses(again.content, toolSpecs).length) {
+              for (const b of again.content) if (b.type === "text" && b.text) this.ev.textDelta(b.text);
+              this.ev.textEnd();
+              result = again;
+              truncated = false;
+            }
+          } catch (e) {
+            if (signal.aborted) throw e;
+            this.ev.warn(`retry failed: ${(e as Error).message}`);
           }
+        }
+        if (truncated) {
+          // Keep whatever text arrived, drop half-formed tool calls, and ask the model to continue.
+          const text = result.content.filter((b): b is TextBlock => b.type === "text" && !!b.text);
+          this.messages.push({ role: "assistant", content: text.length ? text : [{ type: "text", text: "(response lost)" }] });
+          this.messages.push({ role: "user", content: [{ type: "text", text: "[system] Your previous response was cut off by a network error. Continue exactly where you stopped (re-issue any tool calls you were about to make)." }] });
+          this.save();
+          continue;
         }
         this.lastUsage = result.usage;
 

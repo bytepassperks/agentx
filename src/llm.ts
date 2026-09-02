@@ -35,6 +35,8 @@ export interface StreamResult {
   content: ContentBlock[];
   stopReason: string;
   usage: Usage;
+  /** false when the SSE stream ended before message_stop / a stop_reason (proxy cut the connection). */
+  complete: boolean;
 }
 
 export interface StreamHandlers {
@@ -107,13 +109,14 @@ export async function streamMessage(
       if (b.type === "text") handlers.onText?.(b.text);
       else if (b.type === "tool_use") handlers.onToolStart?.(b.name);
     }
-    return { content: json.content, stopReason: json.stop_reason, usage: json.usage };
+    return { content: json.content, stopReason: json.stop_reason, usage: json.usage, complete: true };
   }
 
   const blocks: ContentBlock[] = [];
   const jsonBuf = new Map<number, string>();
   let stopReason = "end_turn";
   let usage: Usage = { input_tokens: 0, output_tokens: 0 };
+  let complete = false;
 
   const debugLog = process.env.AGENTX_DEBUG ? (s: string) => appendFileSync(join(CONFIG_DIR, "debug.log"), `${new Date().toISOString()} ${s}\n`) : null;
   const reader = res.body!.getReader();
@@ -165,8 +168,14 @@ export async function streamMessage(
         break;
       }
       case "message_delta":
-        if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
+        if (ev.delta?.stop_reason) {
+          stopReason = ev.delta.stop_reason;
+          complete = true;
+        }
         if (ev.usage) usage = { ...usage, ...ev.usage };
+        break;
+      case "message_stop":
+        complete = true;
         break;
       case "error":
         throw new LlmError(`stream error: ${ev.error?.message ?? "unknown"}`);
@@ -174,9 +183,16 @@ export async function streamMessage(
   };
 
   while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+    let step: Awaited<ReturnType<typeof reader.read>>;
+    try {
+      step = await reader.read();
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      if (debugLog) debugLog(`STREAM READ ERROR ${(e as Error).message}`);
+      break; // connection dropped mid-stream: return what we have, complete=false
+    }
+    if (step.done) break;
+    buf += decoder.decode(step.value, { stream: true }).replace(/\r\n/g, "\n");
     let idx: number;
     while ((idx = buf.indexOf("\n\n")) !== -1) {
       const chunk = buf.slice(0, idx);
@@ -199,7 +215,8 @@ export async function streamMessage(
     } catch {}
   }
 
-  return { content: blocks.filter(Boolean), stopReason, usage };
+  if (debugLog && !complete) debugLog("STREAM ENDED EARLY (no message_stop)");
+  return { content: blocks.filter(Boolean), stopReason, usage, complete };
 }
 
 /** tool_use blocks whose required arguments never arrived (broken streaming proxies). */
