@@ -2,8 +2,8 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Agent, type AgentEvents } from "./agent";
-import { loadConfig, saveConfig, type Config } from "./config";
-import type { ContentBlock, Message } from "./llm";
+import { inferProvider, loadConfig, PRESETS, saveConfig, type Config } from "./config";
+import { listModels, type ContentBlock, type Message } from "./llm";
 import { toolByName } from "./tools";
 import { runShell } from "./tools/shell";
 import htmlSrc from "./web/index.html" with { type: "text" };
@@ -82,6 +82,7 @@ export class GuiServer {
       sessions: a.listSessions().slice(0, 30).map((s) => ({ id: s.id, title: s.title, updatedAt: s.updatedAt, count: s.messages.length })),
       config: { ...this.cfg, authToken: mask(this.cfg.authToken), githubToken: mask(this.cfg.githubToken) },
       hasToken: !!this.cfg.authToken,
+      presets: PRESETS,
       home: homedir(),
     };
   }
@@ -174,11 +175,23 @@ export class GuiServer {
         // don't overwrite secrets with masked values
         if (patch.authToken && patch.authToken.includes("…")) delete patch.authToken;
         if (patch.githubToken && patch.githubToken.includes("…")) delete patch.githubToken;
+        if (patch.baseUrl && !patch.provider) patch.provider = inferProvider(patch.baseUrl);
         this.cfg = saveConfig(patch);
         a.cfg = this.cfg;
         a.ctx.githubToken = this.cfg.githubToken;
         this.broadcast(this.state());
         this.broadcast({ type: "info", text: "Settings saved" });
+        break;
+      }
+      case "list_models": {
+        const probe: Config = { ...this.cfg, ...((m.patch ?? {}) as Partial<Config>) };
+        if (!probe.authToken || probe.authToken.includes("…")) probe.authToken = this.cfg.authToken;
+        if (probe.baseUrl !== this.cfg.baseUrl) probe.provider = inferProvider(probe.baseUrl);
+        try {
+          c.send(JSON.stringify({ type: "models", models: await listModels(probe) }));
+        } catch (e) {
+          c.send(JSON.stringify({ type: "models", models: [], error: (e as Error).message }));
+        }
         break;
       }
       case "shell": {

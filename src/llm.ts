@@ -2,6 +2,7 @@ import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_DIR } from "./config";
 import type { Config } from "./config";
+import { streamOpenAI } from "./openai";
 
 export type TextBlock = { type: "text"; text: string };
 export type ToolUseBlock = { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
@@ -42,6 +43,8 @@ export interface StreamResult {
 export interface StreamHandlers {
   onText?: (delta: string) => void;
   onToolStart?: (name: string) => void;
+  /** called before sleeping on a retryable HTTP status (429 rate limit etc.) */
+  onWait?: (status: number, ms: number) => void;
 }
 
 interface SseEvent {
@@ -61,6 +64,29 @@ export class LlmError extends Error {
 }
 
 export async function streamMessage(
+  cfg: Config,
+  system: string,
+  messages: Message[],
+  tools: ToolSpec[],
+  handlers: StreamHandlers,
+  signal?: AbortSignal,
+  opts: { stream?: boolean } = {},
+): Promise<StreamResult> {
+  if (cfg.provider === "openai") return streamOpenAI(cfg, system, messages, tools, handlers, signal, opts);
+  return streamAnthropic(cfg, system, messages, tools, handlers, signal, opts);
+}
+
+/** GET /v1/models for the configured provider (both API styles expose it). */
+export async function listModels(cfg: Config): Promise<string[]> {
+  const res = await fetch(cfg.baseUrl.replace(/\/+$/, "") + "/v1/models", {
+    headers: { authorization: `Bearer ${cfg.authToken}`, "x-api-key": cfg.authToken, "anthropic-version": "2023-06-01" },
+  });
+  if (!res.ok) throw new LlmError(`API ${res.status}: ${(await res.text()).slice(0, 300)}`, res.status);
+  const json = (await res.json()) as { data?: { id: string }[] };
+  return (json.data ?? []).map((m) => m.id).sort();
+}
+
+async function streamAnthropic(
   cfg: Config,
   system: string,
   messages: Message[],
@@ -95,8 +121,11 @@ export async function streamMessage(
     if (res.ok) break;
     const text = await res.text();
     const retryable = res.status === 429 || res.status === 529 || res.status >= 500;
-    if (retryable && attempt < 4) {
-      await new Promise((r) => setTimeout(r, 1500 * 2 ** attempt));
+    if (retryable && attempt < 8) {
+      const ra = Number(res.headers.get("retry-after"));
+      const wait = ra > 0 ? Math.min(ra * 1000, 90_000) : Math.min(1500 * 2 ** attempt, 60_000);
+      handlers.onWait?.(res.status, wait);
+      await new Promise((r) => setTimeout(r, wait));
       continue;
     }
     throw new LlmError(`API ${res.status}: ${text.slice(0, 500)}`, res.status);

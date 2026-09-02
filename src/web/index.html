@@ -47,6 +47,13 @@
   .msg.user .bubble { background: var(--accent2); color: white; padding: 9px 14px; border-radius: 14px 14px 4px 14px; max-width: 80%; white-space: pre-wrap; word-break: break-word; }
   .msg.assistant .md { padding: 2px 0; word-break: break-word; }
   .msg.info { color: var(--muted); font-size: 12px; text-align: center; }
+  .msg.warn { color: var(--yellow); font-size: 12px; text-align: center; }
+  .status.err { color: var(--red); }
+  .hint { color: var(--muted); font-size: 11.5px; margin: 4px 0 8px; }
+  .hint a { color: var(--accent); }
+  .modal select { width: 100%; box-sizing: border-box; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin-bottom: 8px; font: inherit; }
+  .inline { display: flex; gap: 8px; align-items: center; }
+  .inline input, .inline select { flex: 1; margin-bottom: 0; }
   .msg.error .bubble { color: var(--red); background: rgba(248,113,113,.08); border: 1px solid rgba(248,113,113,.3); padding: 8px 12px; border-radius: 8px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
   .ask { background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.4); color: var(--yellow); padding: 10px 14px; border-radius: 8px; }
   .tool { border: 1px solid var(--border); background: var(--panel); border-radius: 8px; margin: 6px 0; font-size: 12.5px; overflow: hidden; }
@@ -135,9 +142,15 @@
 <div class="modal-bg" id="settingsModal">
   <div class="modal">
     <h2>Settings</h2>
+    <label>Provider</label>
+    <select id="sPreset"></select>
+    <div class="hint" id="sKeyHint"></div>
+    <label>API key</label><input id="sToken" placeholder="paste key (leave as-is to keep)" />
     <label>API base URL</label><input id="sBase" />
-    <label>API token</label><input id="sToken" placeholder="leave as-is to keep" />
-    <label>Model</label><input id="sModel" />
+    <label>Model</label>
+    <div class="inline"><select id="sModelSel"></select><button id="sRefresh" title="Fetch the live model list from the provider">Refresh</button></div>
+    <input id="sModel" placeholder="or type a model id" style="margin-top:8px" />
+    <div class="hint" id="sModelHint"></div>
     <label>GitHub token (for push / PRs)</label><input id="sGh" placeholder="ghp_… (leave as-is to keep)" />
     <label>Max output tokens</label><input id="sMax" type="number" />
     <div class="row"><button id="sCancel">Cancel</button><button id="sSave" class="primary">Save</button></div>
@@ -322,7 +335,7 @@
       const m = JSON.parse(e.data);
       switch (m.type) {
         case "state": applyState(m); break;
-        case "user": addUser(m.text); setBusy(true, "thinking"); break;
+        case "user": addUser(m.text); status.classList.remove("err"); status.textContent = ""; setBusy(true, "thinking"); break;
         case "thinking": setBusy(true, m.label); break;
         case "text_delta": setBusy(true, "writing"); textDelta(m.delta); break;
         case "text_end": textEnd(); break;
@@ -330,8 +343,9 @@
         case "tool_end": endTool(m.id, m.output, m.isError, m.ms); break;
         case "todos": renderTodos(m.todos); break;
         case "info": addInfo(m.text); break;
-        case "warn": addInfo(m.text); break;
-        case "error": addInfo(m.text, "error"); break;
+        case "warn": addInfo(m.text, "warn"); break;
+        case "error": addInfo(m.text, "error"); status.textContent = "error: " + m.text.slice(0, 160); status.classList.add("err"); break;
+        case "models": onModels(m); break;
         case "ask": askMode = true; hideEmpty(); main.appendChild(el(`<div class="msg"><div class="ask">❓ ${esc(m.question)}</div></div>`)); setBusy(true, "waiting for your answer"); sendBtn.disabled = false; input.placeholder = "Type your answer…"; input.focus(); scroll(true); break;
         case "done": askMode = false; input.placeholder = "Describe a task…"; textEnd(); setBusy(false); break;
         case "dir": renderDir(m); break;
@@ -366,15 +380,53 @@
   $("compactBtn").onclick = () => send_ws({ type: "compact" });
 
   // ---------- settings ----------
+  const norm = (u) => (u || "").replace(/\/+$/, "");
+  function presetFor(baseUrl) { return (state.presets || []).find((p) => norm(baseUrl).startsWith(p.baseUrl)); }
+  function fillModels(list, current) {
+    const sel = $("sModelSel");
+    const items = [...new Set([...(current ? [current] : []), ...list])];
+    sel.innerHTML = items.map((m) => `<option value="${esc(m)}" ${m === current ? "selected" : ""}>${esc(m)}</option>`).join("") + `<option value="" ${current ? "" : "selected"}>custom…</option>`;
+  }
+  function applyPreset(id, keepValues) {
+    const p = (state.presets || []).find((x) => x.id === id);
+    if (p) {
+      if (!keepValues) { $("sBase").value = p.baseUrl; $("sModel").value = p.models[0] || ""; $("sToken").value = ""; }
+      $("sKeyHint").innerHTML = `Get a free key at <a href="${esc(p.keyUrl)}" target="_blank" rel="noopener">${esc(p.keyUrl.replace(/^https?:\/\//, ""))}</a>`;
+      fillModels(p.models, $("sModel").value);
+    } else {
+      $("sKeyHint").textContent = "Custom: any OpenAI-compatible (/v1/chat/completions) or Anthropic-compatible (/v1/messages) endpoint.";
+      fillModels([], $("sModel").value);
+    }
+    $("sModelHint").textContent = p && p.models.length ? "Suggested models listed; press Refresh for everything the provider offers." : "Press Refresh to load the provider's model list.";
+  }
   function openSettings() {
     const c = state.config || {};
+    const presets = state.presets || [];
+    const cur = presetFor(c.baseUrl);
+    $("sPreset").innerHTML = presets.map((p) => `<option value="${p.id}" ${cur && cur.id === p.id ? "selected" : ""}>${esc(p.label)}</option>`).join("") + `<option value="custom" ${cur ? "" : "selected"}>Custom endpoint</option>`;
     $("sBase").value = c.baseUrl || ""; $("sToken").value = c.authToken || ""; $("sModel").value = c.model || ""; $("sGh").value = c.githubToken || ""; $("sMax").value = c.maxTokens || 8192;
+    applyPreset(cur ? cur.id : "custom", true);
     $("settingsModal").classList.add("show");
   }
+  function onModels(m) {
+    $("sRefresh").disabled = false; $("sRefresh").textContent = "Refresh";
+    if (m.error) { $("sModelHint").textContent = "Could not list models: " + m.error; return; }
+    fillModels(m.models, $("sModel").value);
+    $("sModelHint").textContent = m.models.length + " models available";
+  }
+  $("sPreset").onchange = () => applyPreset($("sPreset").value, false);
+  $("sModelSel").onchange = () => { if ($("sModelSel").value) $("sModel").value = $("sModelSel").value; };
+  $("sRefresh").onclick = () => {
+    $("sRefresh").disabled = true; $("sRefresh").textContent = "Loading…";
+    send_ws({ type: "list_models", patch: { baseUrl: $("sBase").value.trim(), authToken: $("sToken").value.trim() } });
+  };
   $("settingsBtn").onclick = openSettings;
   $("sCancel").onclick = () => $("settingsModal").classList.remove("show");
   $("sSave").onclick = () => {
-    send_ws({ type: "set_config", patch: { baseUrl: $("sBase").value.trim(), authToken: $("sToken").value.trim(), model: $("sModel").value.trim(), githubToken: $("sGh").value.trim(), maxTokens: Number($("sMax").value) || 8192 } });
+    const p = (state.presets || []).find((x) => x.id === $("sPreset").value);
+    const patch = { baseUrl: $("sBase").value.trim(), authToken: $("sToken").value.trim(), model: $("sModel").value.trim(), githubToken: $("sGh").value.trim(), maxTokens: Number($("sMax").value) || 8192 };
+    if (p) patch.provider = p.provider;
+    send_ws({ type: "set_config", patch });
     $("settingsModal").classList.remove("show");
   };
 

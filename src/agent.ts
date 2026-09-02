@@ -202,6 +202,9 @@ ${this.todos.length ? `# Current task list\n${this.todos.map((t) => `- [${t.stat
             }
             this.ev.textDelta(d);
           },
+          onWait: (status, ms) => {
+            this.ev.warn(status === 429 ? `rate limited by provider; waiting ${Math.round(ms / 1000)}s` : `API ${status}; retrying in ${Math.round(ms / 1000)}s`);
+          },
           onToolStart: () => {
             if (started) {
               started = false;

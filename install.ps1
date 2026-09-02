@@ -53,15 +53,26 @@ if (Test-Path $ConfigPath) {
     try { ((Get-Content $ConfigPath -Raw) -replace '^\xEF\xBB\xBF|^\uFEFF','' | ConvertFrom-Json).PSObject.Properties | ForEach-Object { $cfg[$_.Name] = $_.Value } } catch {}
 }
 
-# token / base url: env var > existing config > prompt
+# provider: env var > existing config > NVIDIA default (free at build.nvidia.com)
+$NvidiaUrl = "https://integrate.api.nvidia.com"
+$OldProxy = "https://claudemax-v4.pages.dev"
+if ($env:AGENTX_BASE_URL) { $cfg.baseUrl = $env:AGENTX_BASE_URL; $cfg.Remove("provider") }
+if (-not $cfg.baseUrl -or $cfg.baseUrl -eq $OldProxy) {
+    # fresh install, or migrating off the dead proxy
+    if ($cfg.baseUrl -eq $OldProxy) { Write-Host "  ! old proxy $OldProxy no longer works; switching to NVIDIA" -ForegroundColor Yellow; $cfg.Remove("authToken") }
+    $cfg.baseUrl = $NvidiaUrl
+    $cfg.provider = "openai"
+    if (-not $env:AGENTX_MODEL -and (-not $cfg.model -or "$($cfg.model)".StartsWith("claude"))) { $cfg.model = "openai/gpt-oss-120b" }
+}
+if ($env:AGENTX_PROVIDER) { $cfg.provider = $env:AGENTX_PROVIDER }
 if ($env:AGENTX_TOKEN) { $cfg.authToken = $env:AGENTX_TOKEN }
-$cfg.baseUrl = if ($env:AGENTX_BASE_URL) { $env:AGENTX_BASE_URL } else { "https://claudemax-v4.pages.dev" }
-
 if ($env:AGENTX_GITHUB_TOKEN) { $cfg.githubToken = $env:AGENTX_GITHUB_TOKEN }
 if ($env:AGENTX_MODEL) { $cfg.model = $env:AGENTX_MODEL }
 
 if (-not $cfg.authToken) {
-    $cfg.authToken = Read-Host "  API token"
+    if ($cfg.baseUrl -eq $NvidiaUrl) { Write-Host "  Get a free NVIDIA key at https://build.nvidia.com/settings/api-keys" -ForegroundColor Cyan }
+    $t = Read-Host "  API key (Enter to set later in Settings)"
+    if ($t) { $cfg.authToken = $t }
 }
 if (-not $cfg.githubToken) {
     $g = Read-Host "  GitHub token for PRs/push (Enter to skip)"

@@ -1,15 +1,29 @@
 # agentx
 
 Devin-style autonomous coding agent that runs on your own Windows machine as a single `agentx.exe`.
-Talks to any Anthropic-compatible `/v1/messages` endpoint (your own proxy, Bedrock gateway, or Anthropic directly).
+Works with NVIDIA's free API (default), OpenRouter, Groq, any OpenAI-compatible `/v1/chat/completions` endpoint, or any Anthropic-compatible `/v1/messages` endpoint. Pick the provider and model in Settings.
 
 ## Install (Windows, one command)
 
+1. Get a free key at <https://build.nvidia.com/settings/api-keys> (NVIDIA developer account).
+2. In PowerShell:
+
 ```powershell
-$env:AGENTX_TOKEN="YOUR_TOKEN"; $env:AGENTX_GITHUB_TOKEN="ghp_xxx"; irm https://raw.githubusercontent.com/bytepassperks/agentx/main/install.ps1 | iex
+$env:AGENTX_TOKEN="nvapi-…"; $env:AGENTX_GITHUB_TOKEN="ghp_xxx"; irm https://raw.githubusercontent.com/bytepassperks/agentx/main/install.ps1 | iex
 ```
 
-`AGENTX_GITHUB_TOKEN` is optional (needed for `git_push` / PR creation). Base URL defaults to `https://claudemax-v4.pages.dev`; override with `$env:AGENTX_BASE_URL`.
+`AGENTX_GITHUB_TOKEN` is optional (needed for `git_push` / PR creation). Other overrides: `AGENTX_BASE_URL`, `AGENTX_PROVIDER` (`openai`|`anthropic`), `AGENTX_MODEL`. Re-running the installer keeps your existing config.
+
+## Providers & models
+
+| Preset | Endpoint | Notes |
+|---|---|---|
+| NVIDIA (default) | `https://integrate.api.nvidia.com` | free, ~40 req/min; default model `openai/gpt-oss-120b` (fast, tool-calls). Also `nvidia/nemotron-3-super-120b-a12b`, `deepseek-ai/deepseek-v4-pro-0813`, `moonshotai/kimi-k3` (very slow on the free tier) |
+| OpenRouter | `https://openrouter.ai/api` | any model on OpenRouter |
+| Groq | `https://api.groq.com/openai` | free tier |
+| Anthropic | `https://api.anthropic.com` | or any Anthropic-compatible proxy |
+
+Settings → **Refresh** lists every model the provider serves (`agentx config --models` in the terminal). Context window and rate limits are set by the provider/model; agentx auto-compacts the conversation before the window fills and automatically waits and retries on 429s.
 
 The installer adds an **agentx** shortcut to the Start Menu and Desktop and opens the app.
 
@@ -40,7 +54,7 @@ agentx update               # upgrade
 
 ## Config
 
-`~/.agentx/config.json` or `agentx config --token T --base-url U --model M --github-token G`.
+`~/.agentx/config.json` or `agentx config --preset nvidia --token T --model M --github-token G` (`--base-url U --provider openai|anthropic` for custom endpoints). Keys are stored only in that file; never commit it.
 
 ## Build from source
 

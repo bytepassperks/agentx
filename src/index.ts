@@ -2,13 +2,14 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import * as readline from "node:readline";
 import { Agent } from "./agent";
-import { CONFIG_PATH, loadConfig, saveConfig, type Config } from "./config";
+import { CONFIG_PATH, inferProvider, loadConfig, PRESETS, saveConfig, type Config } from "./config";
+import { listModels } from "./llm";
 import { launchGui } from "./gui";
 import { renderTodos } from "./tools/misc";
 import { runShell } from "./tools/shell";
 import * as ui from "./ui";
 
-export const VERSION = "0.2.3";
+export const VERSION = "0.3.0";
 const INSTALL_URL = "https://raw.githubusercontent.com/bytepassperks/agentx/main/install.ps1";
 
 function usage() {
@@ -20,7 +21,8 @@ Usage:
   agentx --serve [--port N]    run the GUI server without opening a window
   agentx "do something"        run one task in the terminal, print result, exit
   agentx -c                    continue the most recent session in this directory
-  agentx config [--token T] [--base-url U] [--model M] [--github-token G] [--show]
+  agentx config [--preset nvidia|openrouter|groq|anthropic] [--token T] [--base-url U]
+                [--provider openai|anthropic] [--model M] [--github-token G] [--models]
   agentx update                re-run the installer to get the latest version
   agentx --version
 
@@ -42,15 +44,31 @@ async function main() {
       const a = argv[i]!;
       const v = argv[i + 1];
       if (a === "--token" && v) (patch.authToken = v), i++;
+      else if (a === "--preset" && v) {
+        const p = PRESETS.find((x) => x.id === v);
+        if (!p) return ui.error(`unknown preset ${v}; one of: ${PRESETS.map((x) => x.id).join(", ")}`);
+        patch.provider = p.provider;
+        patch.baseUrl = p.baseUrl;
+        if (p.models[0]) patch.model = p.models[0];
+        i++;
+      } else if (a === "--provider" && (v === "openai" || v === "anthropic")) (patch.provider = v), i++;
       else if (a === "--base-url" && v) (patch.baseUrl = v), i++;
       else if (a === "--model" && v) (patch.model = v), i++;
       else if (a === "--github-token" && v) (patch.githubToken = v), i++;
       else if (a === "--max-tokens" && v) (patch.maxTokens = Number(v)), i++;
     }
+    if (patch.baseUrl && !patch.provider) patch.provider = inferProvider(patch.baseUrl);
     if (Object.keys(patch).length) saveConfig(patch);
     const cfg = loadConfig();
     ui.line(`config file: ${CONFIG_PATH}`);
     ui.line(JSON.stringify({ ...cfg, authToken: mask(cfg.authToken), githubToken: mask(cfg.githubToken) }, null, 2));
+    if (argv.includes("--models")) {
+      try {
+        for (const m of await listModels(cfg)) ui.line("  " + m);
+      } catch (e) {
+        ui.error((e as Error).message);
+      }
+    }
     return;
   }
 
@@ -76,7 +94,7 @@ async function main() {
 
   const cfg = loadConfig();
   if (!cfg.authToken) {
-    ui.error(`no API token configured. Run: agentx config --token <token> --base-url <url>`);
+    ui.error(`no API key configured. Run: agentx config --preset nvidia --token <nvapi-...>  (key: https://build.nvidia.com/settings/api-keys)`);
     process.exit(1);
   }
 
