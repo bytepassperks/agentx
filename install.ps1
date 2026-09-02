@@ -69,12 +69,18 @@ if ($env:AGENTX_TOKEN) { $cfg.authToken = $env:AGENTX_TOKEN }
 if ($env:AGENTX_GITHUB_TOKEN) { $cfg.githubToken = $env:AGENTX_GITHUB_TOKEN }
 if ($env:AGENTX_MODEL) { $cfg.model = $env:AGENTX_MODEL }
 
+$Interactive = [Environment]::UserInteractive -and -not $env:AGENTX_NO_LAUNCH
+try { $null = $Host.UI.RawUI.KeyAvailable } catch { $Interactive = $false }
 if (-not $cfg.authToken) {
     if ($cfg.baseUrl -eq $NvidiaUrl) { Write-Host "  Get a free NVIDIA key at https://build.nvidia.com/settings/api-keys" -ForegroundColor Cyan }
-    $t = Read-Host "  API key (Enter to set later in Settings)"
-    if ($t) { $cfg.authToken = $t }
+    if ($Interactive) {
+        $t = Read-Host "  API key (Enter to set later in Settings)"
+        if ($t) { $cfg.authToken = $t }
+    } else {
+        Write-Host "  Set your key later: agentx config --token <key>   (or in the app's Settings)" -ForegroundColor Yellow
+    }
 }
-if (-not $cfg.githubToken) {
+if (-not $cfg.githubToken -and $Interactive) {
     $g = Read-Host "  GitHub token for PRs/push (Enter to skip)"
     if ($g) { $cfg.githubToken = $g }
 }
