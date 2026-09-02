@@ -1,0 +1,28 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+      - run: bun install --frozen-lockfile
+      - run: bunx tsc --noEmit
+      - run: bun run build:win && bun run build:linux && bun run build:mac
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/agentx.exe
+            dist/agentx-linux
+            dist/agentx-macos
+          generate_release_notes: true

@@ -1,0 +1,18 @@
+{
+  "name": "agentx",
+  "version": "0.1.0",
+  "description": "Devin-style autonomous coding agent for Windows, single .exe",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "build:win": "bun build --compile --minify --target=bun-windows-x64 src/index.ts --outfile dist/agentx.exe",
+    "build:linux": "bun build --compile --minify --target=bun-linux-x64 src/index.ts --outfile dist/agentx-linux",
+    "build:mac": "bun build --compile --minify --target=bun-darwin-arm64 src/index.ts --outfile dist/agentx-macos"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "typescript": "^5.6.0"
+  }
+}
