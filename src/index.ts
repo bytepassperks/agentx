@@ -7,7 +7,7 @@ import { renderTodos } from "./tools/misc";
 import { runShell } from "./tools/shell";
 import * as ui from "./ui";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.1.1";
 const INSTALL_URL = "https://raw.githubusercontent.com/bytepassperks/agentx/main/install.ps1";
 
 function usage() {
@@ -111,32 +111,58 @@ async function main() {
   });
 
   const prompt = () => {
-    rl.setPrompt(ui.color.bold(ui.color.magenta("\n❯ ")));
+    rl.setPrompt(ui.color.bold(ui.color.magenta(process.platform === "win32" ? "\n> " : "\n❯ ")));
     rl.prompt();
   };
 
-  rl.on("line", async (raw) => {
+  const queue: string[] = [];
+  let busy = false;
+  let closed = false;
+
+  const handle = async (input: string) => {
+    if (input.startsWith("/")) await slash(input, agent, rl);
+    else if (input.startsWith("!")) {
+      const r = await runShell(input.slice(1), agent.cwd, 300_000);
+      ui.line(r.stdout + (r.stderr ? ui.color.red(r.stderr) : ""));
+    } else await agent.run(input);
+  };
+
+  const drain = async () => {
+    if (busy) return;
+    busy = true;
+    while (queue.length) {
+      const input = queue.shift()!;
+      try {
+        await handle(input);
+      } catch (e) {
+        ui.error((e as Error).stack ?? String(e));
+      }
+    }
+    busy = false;
+    if (closed) {
+      agent.save();
+      ui.line();
+      process.exit(0);
+    }
+    prompt();
+  };
+
+  rl.on("line", (raw) => {
     const input = raw.trim();
     sigints = 0;
-    if (!input) return prompt();
-    rl.pause();
-    try {
-      if (input.startsWith("/")) await slash(input, agent, rl);
-      else if (input.startsWith("!")) {
-        const r = await runShell(input.slice(1), agent.cwd, 300_000);
-        ui.line(r.stdout + (r.stderr ? ui.color.red(r.stderr) : ""));
-      } else await agent.run(input);
-    } catch (e) {
-      ui.error((e as Error).stack ?? String(e));
-    }
-    rl.resume();
-    prompt();
+    if (!input) return busy ? undefined : prompt();
+    queue.push(input);
+    if (busy) ui.info("(queued — will run after the current task)");
+    void drain();
   });
 
   rl.on("close", () => {
-    agent.save();
-    ui.line();
-    process.exit(0);
+    closed = true;
+    if (!busy) {
+      agent.save();
+      ui.line();
+      process.exit(0);
+    }
   });
 
   prompt();

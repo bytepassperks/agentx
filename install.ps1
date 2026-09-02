@@ -21,15 +21,14 @@ if ($PSVersionTable.PSVersion.Major -lt 5) { throw "PowerShell 5+ required" }
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 # --- download latest release ---
-Write-Step "Fetching latest release..."
-$release = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ "User-Agent" = "agentx-installer" }
-$asset = $release.assets | Where-Object { $_.name -eq "agentx.exe" } | Select-Object -First 1
-if (-not $asset) { throw "agentx.exe not found in latest release" }
+$Version = if ($env:AGENTX_VERSION) { $env:AGENTX_VERSION } else { "latest" }
+$Url = if ($Version -eq "latest") { "https://github.com/$Repo/releases/latest/download/agentx.exe" } else { "https://github.com/$Repo/releases/download/$Version/agentx.exe" }
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $tmp = "$Exe.download"
-Write-Step "Downloading agentx $($release.tag_name)..."
-Invoke-WebRequest $asset.browser_download_url -OutFile $tmp -UseBasicParsing
+Write-Step "Downloading agentx ($Version)..."
+$ProgressPreference = "SilentlyContinue"
+Invoke-WebRequest $Url -OutFile $tmp -UseBasicParsing
 if (Test-Path $Exe) { Remove-Item $Exe -Force }
 Move-Item $tmp $Exe -Force
 Write-Ok "Installed to $Exe"
@@ -66,10 +65,7 @@ if ($env:AGENTX_MODEL) { $cfg.model = $env:AGENTX_MODEL }
 if (-not $cfg.authToken) {
     $cfg.authToken = Read-Host "  API token"
 }
-if (-not $cfg.baseUrl) {
-    $u = Read-Host "  API base URL (Enter for https://claudemax-v4.pages.dev)"
-    $cfg.baseUrl = if ($u) { $u } else { "https://claudemax-v4.pages.dev" }
-}
+if (-not $cfg.baseUrl) { $cfg.baseUrl = "https://claudemax-v4.pages.dev" }
 if (-not $cfg.githubToken) {
     $g = Read-Host "  GitHub token for PRs/push (Enter to skip)"
     if ($g) { $cfg.githubToken = $g }

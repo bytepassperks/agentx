@@ -58,7 +58,7 @@ export function banner(version: string, model: string, cwd: string) {
 }
 
 let spinnerTimer: ReturnType<typeof setInterval> | null = null;
-const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const frames = process.platform === "win32" ? ["|", "/", "-", "\\"] : ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 export function spinnerStart(label: string) {
   if (!isTTY) return;
