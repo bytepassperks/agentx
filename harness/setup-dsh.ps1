@@ -3,13 +3,13 @@
 #
 #   $env:NVIDIA_API_KEY="nvapi-..."; irm "https://raw.githubusercontent.com/bytepassperks/agentx/main/harness/setup-dsh.ps1" | iex
 #
-# Optional env: DSH_ROOT (default D:\Harness), DSH_MODEL (default openai/gpt-oss-120b), DSH_NO_LAUNCH=1
+# Optional env: DSH_ROOT (default D:\Harness), DSH_MODEL (default nvidia/nemotron-3-super-120b-a12b), DSH_NO_LAUNCH=1
 
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Root = if ($env:DSH_ROOT) { $env:DSH_ROOT } else { "D:\Harness" }
-$Model = if ($env:DSH_MODEL) { $env:DSH_MODEL } else { "openai/gpt-oss-120b" }
+$Model = if ($env:DSH_MODEL) { $env:DSH_MODEL } else { "nvidia/nemotron-3-super-120b-a12b" }
 $NodeDir = Join-Path $Root "node"
 $NpmDir = Join-Path $Root "npm"
 $NpmCache = Join-Path $Root "npm-cache"
@@ -132,7 +132,6 @@ llm-pi-ai:
         maxTokensField: max_tokens
       models:
         - id: $Model
-        - id: nvidia/nemotron-3-super-120b-a12b
         - id: nvidia/nemotron-3-ultra-550b-a55b
         - id: deepseek-ai/deepseek-v4-pro-0813
         - id: deepseek-ai/deepseek-v4-flash-0731
@@ -144,6 +143,11 @@ agent-default-model:
     if (Test-Path $Settings) { $yaml = (Get-Content $Settings -Raw) + "`r`n" + $yaml }
     [IO.File]::WriteAllText($Settings, $yaml, (New-Object Text.UTF8Encoding $false))
     Write-Host "  + NVIDIA provider written to $Settings" -ForegroundColor Green
+} elseif (Select-String -Path $Settings -Pattern "openai/gpt-oss-120b" -Quiet) {
+    # NVIDIA retired this model on 2026-09-03 (HTTP 410)
+    $txt = (Get-Content $Settings -Raw) -replace 'openai/gpt-oss-120b', $Model
+    [IO.File]::WriteAllText($Settings, $txt, (New-Object Text.UTF8Encoding $false))
+    Write-Host "  ! openai/gpt-oss-120b was retired by NVIDIA; default model is now $Model" -ForegroundColor Yellow
 }
 
 # ---- web_search via Exa (dsh plugin, per profile) ----

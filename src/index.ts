@@ -9,7 +9,7 @@ import { renderTodos } from "./tools/misc";
 import { runShell } from "./tools/shell";
 import * as ui from "./ui";
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.3.1";
 const INSTALL_URL = "https://raw.githubusercontent.com/bytepassperks/agentx/main/install.ps1";
 
 function usage() {

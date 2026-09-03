@@ -18,7 +18,7 @@ $env:AGENTX_TOKEN="nvapi-…"; $env:AGENTX_GITHUB_TOKEN="ghp_xxx"; irm https://r
 
 | Preset | Endpoint | Notes |
 |---|---|---|
-| NVIDIA (default) | `https://integrate.api.nvidia.com` | free, ~40 req/min; default model `openai/gpt-oss-120b` (fast, tool-calls). Also `nvidia/nemotron-3-super-120b-a12b`, `deepseek-ai/deepseek-v4-pro-0813`, `moonshotai/kimi-k3` (very slow on the free tier) |
+| NVIDIA (default) | `https://integrate.api.nvidia.com` | free, ~40 req/min; default model `nvidia/nemotron-3-super-120b-a12b` (fast, tool-calls; `openai/gpt-oss-120b` was retired by NVIDIA on 2026-09-03). Also `deepseek-ai/deepseek-v4-pro-0813`, `moonshotai/kimi-k3` (very slow on the free tier) |
 | OpenRouter | `https://openrouter.ai/api` | any model on OpenRouter |
 | Groq | `https://api.groq.com/openai` | free tier |
 | Anthropic | `https://api.anthropic.com` | or any Anthropic-compatible proxy |

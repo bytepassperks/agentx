@@ -62,8 +62,9 @@ if (-not $cfg.baseUrl -or $cfg.baseUrl -eq $OldProxy) {
     if ($cfg.baseUrl -eq $OldProxy) { Write-Host "  ! old proxy $OldProxy no longer works; switching to NVIDIA" -ForegroundColor Yellow; $cfg.Remove("authToken") }
     $cfg.baseUrl = $NvidiaUrl
     $cfg.provider = "openai"
-    if (-not $env:AGENTX_MODEL -and (-not $cfg.model -or "$($cfg.model)".StartsWith("claude"))) { $cfg.model = "openai/gpt-oss-120b" }
+    if (-not $env:AGENTX_MODEL -and (-not $cfg.model -or "$($cfg.model)".StartsWith("claude"))) { $cfg.model = "nvidia/nemotron-3-super-120b-a12b" }
 }
+if ($cfg.model -eq "openai/gpt-oss-120b") { Write-Host "  ! NVIDIA retired openai/gpt-oss-120b; switching model to nvidia/nemotron-3-super-120b-a12b" -ForegroundColor Yellow; $cfg.model = "nvidia/nemotron-3-super-120b-a12b" }
 if ($env:AGENTX_PROVIDER) { $cfg.provider = $env:AGENTX_PROVIDER }
 if ($env:AGENTX_TOKEN) { $cfg.authToken = $env:AGENTX_TOKEN }
 if ($env:AGENTX_GITHUB_TOKEN) { $cfg.githubToken = $env:AGENTX_GITHUB_TOKEN }

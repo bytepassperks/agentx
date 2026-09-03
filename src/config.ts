@@ -23,7 +23,6 @@ export const PRESETS: ProviderPreset[] = [
     keyUrl: "https://build.nvidia.com/settings/api-keys",
     // ordered fast→slow as measured on the free tier; all verified to emit tool calls
     models: [
-      "openai/gpt-oss-120b",
       "nvidia/nemotron-3-super-120b-a12b",
       "nvidia/nemotron-3.5-lightning-30b-a3b",
       "nvidia/nemotron-3-ultra-550b-a55b",
@@ -76,7 +75,7 @@ export const DEFAULTS: Config = {
   provider: "openai",
   baseUrl: "https://integrate.api.nvidia.com",
   authToken: "",
-  model: "openai/gpt-oss-120b",
+  model: "nvidia/nemotron-3-super-120b-a12b",
   maxTokens: 8192,
   githubToken: "",
   gitUserName: "",
