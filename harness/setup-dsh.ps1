@@ -63,12 +63,13 @@ Write-Host "  + dsh installed -> $NpmDir" -ForegroundColor Green
 $EnvFile = Join-Path $Home_ ".env"
 function Read-EnvKey($name) {
     if (-not (Test-Path $EnvFile)) { return $null }
-    $m = Select-String -Path $EnvFile -Pattern "^$name=(.+)$" | Select-Object -First 1
+    # tolerate a line where a previous run glued two keys together (KEY1=aaaKEY2=bbb)
+    $m = Select-String -Path $EnvFile -Pattern "^$name=(.+?)(?=[A-Z_]+_API_KEY=|$)" | Select-Object -First 1
     if ($m) { $m.Matches[0].Groups[1].Value.Trim() } else { $null }
 }
 function Write-EnvKey($name, $value) {
     $lines = @()
-    if (Test-Path $EnvFile) { $lines = [IO.File]::ReadAllLines($EnvFile) | Where-Object { $_ -notmatch "^$name=" -and $_ -ne '' } }
+    if (Test-Path $EnvFile) { $lines = @([IO.File]::ReadAllLines($EnvFile) | Where-Object { $_ -notmatch "^$name=" -and $_.Trim() -ne '' }) }
     $lines += "$name=$value"
     [IO.File]::WriteAllText($EnvFile, (($lines -join "`n") + "`n"), (New-Object Text.UTF8Encoding $false))
 }
