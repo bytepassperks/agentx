@@ -72,8 +72,20 @@ if (-not $Key) {
 }
 if ($Key) {
     $Key = $Key.Trim().Trim('"', "'", '<', '>')
+    # dsh only accepts printable ASCII (no spaces, no unicode) in the key
+    if ($Key -notmatch '^nvapi-[\x21-\x7E]+$') {
+        $bad = ([char[]]$Key | Where-Object { [int]$_ -lt 33 -or [int]$_ -gt 126 } | ForEach-Object { 'U+{0:X4}' -f [int]$_ } | Select-Object -Unique) -join ' '
+        throw "NVIDIA_API_KEY is not a raw nvapi-... key (bad characters: $bad). Copy the key alone from https://build.nvidia.com/settings/api-keys and re-run."
+    }
+    $env:NVIDIA_API_KEY = $Key
     [IO.File]::WriteAllText($EnvFile, "NVIDIA_API_KEY=$Key`n", (New-Object Text.UTF8Encoding $false))
     Write-Host "  + key saved to $EnvFile" -ForegroundColor Green
+}
+# a stale key in dsh's managed store would override .env - drop it
+$CredFile = Join-Path $Home_ ".credentials.yaml"
+if ((Test-Path $CredFile) -and (Select-String -Path $CredFile -Pattern 'NVIDIA_API_KEY' -Quiet)) {
+    Remove-Item $CredFile -Force
+    Write-Host "  + removed stale $CredFile" -ForegroundColor Yellow
 }
 
 # ---- provider config (NVIDIA, OpenAI-compatible) ----
@@ -115,6 +127,8 @@ set "PATH=$NodeDir;$NpmDir;%PATH%"
 set "npm_config_prefix=$NpmDir"
 set "npm_config_cache=$NpmCache"
 set "DSH_TELEMETRY_MODE=DISABLED"
+rem the key in .env always wins over whatever this shell inherited
+for /f "usebackq tokens=1,* delims==" %%A in ("$Home_\.env") do if /i "%%A"=="NVIDIA_API_KEY" set "NVIDIA_API_KEY=%%B"
 if "%~1"=="" (
   cd /d "$Workspace"
   "$NpmDir\dsh.cmd" web
