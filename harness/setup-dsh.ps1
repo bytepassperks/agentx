@@ -71,7 +71,8 @@ if (-not $Key) {
     $Key = Read-Host "  NVIDIA API key (nvapi-...)"
 }
 if ($Key) {
-    [IO.File]::WriteAllText($EnvFile, "NVIDIA_API_KEY=$Key`r`n", (New-Object Text.UTF8Encoding $false))
+    $Key = $Key.Trim().Trim('"', "'", '<', '>')
+    [IO.File]::WriteAllText($EnvFile, "NVIDIA_API_KEY=$Key`n", (New-Object Text.UTF8Encoding $false))
     Write-Host "  + key saved to $EnvFile" -ForegroundColor Green
 }
 
