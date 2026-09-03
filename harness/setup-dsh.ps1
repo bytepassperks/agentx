@@ -59,13 +59,23 @@ Write-Host "  > Installing @deepseek-ai/dsh (this takes a few minutes)..."
 if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
 Write-Host "  + dsh installed -> $NpmDir" -ForegroundColor Green
 
+# ---- keys (.env under D:\Harness\home; one KEY=value per line) ----
+$EnvFile = Join-Path $Home_ ".env"
+function Read-EnvKey($name) {
+    if (-not (Test-Path $EnvFile)) { return $null }
+    $m = Select-String -Path $EnvFile -Pattern "^$name=(.+)$" | Select-Object -First 1
+    if ($m) { $m.Matches[0].Groups[1].Value.Trim() } else { $null }
+}
+function Write-EnvKey($name, $value) {
+    $lines = @()
+    if (Test-Path $EnvFile) { $lines = [IO.File]::ReadAllLines($EnvFile) | Where-Object { $_ -notmatch "^$name=" -and $_ -ne '' } }
+    $lines += "$name=$value"
+    [IO.File]::WriteAllText($EnvFile, (($lines -join "`n") + "`n"), (New-Object Text.UTF8Encoding $false))
+}
+
 # ---- NVIDIA key ----
 $Key = $env:NVIDIA_API_KEY
-$EnvFile = Join-Path $Home_ ".env"
-if (-not $Key -and (Test-Path $EnvFile)) {
-    $m = Select-String -Path $EnvFile -Pattern '^NVIDIA_API_KEY=(.+)$' | Select-Object -First 1
-    if ($m) { $Key = $m.Matches[0].Groups[1].Value }
-}
+if (-not $Key) { $Key = Read-EnvKey 'NVIDIA_API_KEY' }
 if (-not $Key) {
     Write-Host "  Get a free key at https://build.nvidia.com/settings/api-keys" -ForegroundColor Cyan
     $Key = Read-Host "  NVIDIA API key (nvapi-...)"
@@ -78,8 +88,25 @@ if ($Key) {
         throw "NVIDIA_API_KEY is not a raw nvapi-... key (bad characters: $bad). Copy the key alone from https://build.nvidia.com/settings/api-keys and re-run."
     }
     $env:NVIDIA_API_KEY = $Key
-    [IO.File]::WriteAllText($EnvFile, "NVIDIA_API_KEY=$Key`n", (New-Object Text.UTF8Encoding $false))
-    Write-Host "  + key saved to $EnvFile" -ForegroundColor Green
+    Write-EnvKey 'NVIDIA_API_KEY' $Key
+    Write-Host "  + NVIDIA key saved to $EnvFile" -ForegroundColor Green
+}
+
+# ---- Exa key (web_search) ----
+$ExaKey = $env:EXA_API_KEY
+if (-not $ExaKey) { $ExaKey = Read-EnvKey 'EXA_API_KEY' }
+$Interactive = [Environment]::UserInteractive
+try { $null = $Host.UI.RawUI.KeyAvailable } catch { $Interactive = $false }
+if (-not $ExaKey -and $Interactive) {
+    Write-Host "  Optional: Exa key for web_search (free tier at https://dashboard.exa.ai)" -ForegroundColor Cyan
+    $ExaKey = Read-Host "  EXA API key (Enter to skip)"
+}
+if ($ExaKey) {
+    $ExaKey = $ExaKey.Trim().Trim('"', "'", '<', '>')
+    if ($ExaKey -notmatch '^[\x21-\x7E]+$') { throw "EXA_API_KEY contains characters that cannot go in an HTTP header; paste the raw key alone." }
+    $env:EXA_API_KEY = $ExaKey
+    Write-EnvKey 'EXA_API_KEY' $ExaKey
+    Write-Host "  + Exa key saved to $EnvFile" -ForegroundColor Green
 }
 # a stale key in dsh's managed store would override .env - drop it
 $CredFile = Join-Path $Home_ ".credentials.yaml"
@@ -118,6 +145,45 @@ agent-default-model:
     Write-Host "  + NVIDIA provider written to $Settings" -ForegroundColor Green
 }
 
+# ---- web_search via Exa (dsh plugin, per profile) ----
+$ExaPatch = @"
+# web_search -> Exa (key from EXA_API_KEY in `$DSH_HOME\.env); DeepSeek search disabled
+- id: web
+  config:
+    searchProvider: exa
+    fetchProvider: http
+- id: web-search-deepseek
+  disabled: true
+- insert:
+    - id: web-search-exa
+      name: '@deepseek-ai/dsh-web-search-exa'
+      config:
+        apiKey: !!js process.env.EXA_API_KEY
+"@
+if ($ExaKey) {
+    $env:DSH_HOME = $Home_
+    $env:DSH_TELEMETRY_MODE = "DISABLED"
+    $DshVersion = (& (Join-Path $NodeDir "npm.cmd") ls -g @deepseek-ai/dsh --depth=0 --json | ConvertFrom-Json).dependencies.'@deepseek-ai/dsh'.version
+    foreach ($p in @('web', 'headless')) {
+        $ProfileDir = Join-Path $Home_ "profiles\$p"
+        # first run creates the profile directory from dsh's shipped template
+        if (-not (Test-Path (Join-Path $ProfileDir "package.json"))) {
+            & (Join-Path $NpmDir "dsh.cmd") --profile $p --help *> $null
+        }
+        if (-not (Test-Path (Join-Path $ProfileDir "package.json"))) { throw "dsh did not create profile '$p' under $ProfileDir" }
+        Push-Location $ProfileDir
+        # --legacy-peer-deps: the plugin's peers (dsh-web, cordis) resolve from dsh's own install via profiles\node_modules
+        & (Join-Path $NodeDir "npm.cmd") install --legacy-peer-deps --no-package-lock --loglevel=error "@deepseek-ai/dsh-web-search-exa@$DshVersion"
+        $rc = $LASTEXITCODE
+        Pop-Location
+        if ($rc -ne 0) { throw "npm install of @deepseek-ai/dsh-web-search-exa failed in $ProfileDir" }
+        [IO.File]::WriteAllText((Join-Path $ProfileDir "cordis.patch.yml"), $ExaPatch, (New-Object Text.UTF8Encoding $false))
+    }
+    Write-Host "  + web_search -> Exa (profiles: web, headless)" -ForegroundColor Green
+} else {
+    Write-Host "  ! no EXA_API_KEY: web_search stays on DeepSeek search (needs DEEPSEEK_API_KEY) - set `$env:EXA_API_KEY and re-run to switch" -ForegroundColor Yellow
+}
+
 # ---- launcher ----
 $Launcher = Join-Path $Root "dsh.cmd"
 @"
@@ -127,8 +193,11 @@ set "PATH=$NodeDir;$NpmDir;%PATH%"
 set "npm_config_prefix=$NpmDir"
 set "npm_config_cache=$NpmCache"
 set "DSH_TELEMETRY_MODE=DISABLED"
-rem the key in .env always wins over whatever this shell inherited
-for /f "usebackq tokens=1,* delims==" %%A in ("$Home_\.env") do if /i "%%A"=="NVIDIA_API_KEY" set "NVIDIA_API_KEY=%%B"
+rem keys in .env always win over whatever this shell inherited
+for /f "usebackq tokens=1,* delims==" %%A in ("$Home_\.env") do (
+  if /i "%%A"=="NVIDIA_API_KEY" set "NVIDIA_API_KEY=%%B"
+  if /i "%%A"=="EXA_API_KEY" set "EXA_API_KEY=%%B"
+)
 if "%~1"=="" (
   cd /d "$Workspace"
   "$NpmDir\dsh.cmd" web
