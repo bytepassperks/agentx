@@ -149,6 +149,16 @@ agent-default-model:
     [IO.File]::WriteAllText($Settings, $txt, (New-Object Text.UTF8Encoding $false))
     Write-Host "  ! openai/gpt-oss-120b was retired by NVIDIA; default model is now $Model" -ForegroundColor Yellow
 }
+# dsh deactivates a provider whose model ids are not unique - drop repeated "- id:" lines
+$seen = @{}; $out = New-Object System.Collections.Generic.List[string]
+foreach ($line in [IO.File]::ReadAllLines($Settings)) {
+    if ($line -match '^\s*- id: (.+)$') {
+        if ($seen.ContainsKey($Matches[1])) { continue }
+        $seen[$Matches[1]] = $true
+    }
+    $out.Add($line)
+}
+[IO.File]::WriteAllText($Settings, (($out -join "`n") + "`n"), (New-Object Text.UTF8Encoding $false))
 
 # ---- web_search via Exa (dsh plugin, per profile) ----
 $ExaPatch = @"
